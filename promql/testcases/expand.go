@@ -34,6 +34,7 @@ package testcases
 import (
 	"bytes"
 	"fmt"
+	"strings"
 	"text/template"
 	"time"
 
@@ -133,7 +134,7 @@ func applyQueryTweaks(tc *comparer.TestCase, tweaks []*config.QueryTweak) *compa
 }
 
 // ExpandTestCases returns the fully expanded test cases for a given set of templates test cases.
-func ExpandTestCases(cases []*config.TestCase, tweaks []*config.QueryTweak, start, end time.Time, resolution time.Duration) []*comparer.TestCase {
+func ExpandTestCases(cases []*config.QueryCase, tweaks []*config.QueryTweak, start, end time.Time, resolution time.Duration) []*comparer.TestCase {
 	tcs := make([]*comparer.TestCase, 0)
 	for _, q := range cases {
 		vs := getVariants(q.Query, q.VariantArgs, make(map[string]string))
@@ -145,10 +146,25 @@ func ExpandTestCases(cases []*config.TestCase, tweaks []*config.QueryTweak, star
 				Start:          start,
 				End:            end,
 				Resolution:     resolution,
+				ExecType:       comparer.RangeQuery,
 			}
 
 			tcs = append(tcs, applyQueryTweaks(tc, tweaks))
 		}
+	}
+	return tcs
+}
+
+func ExpandMetaTestCases(names []*config.LabelsCase, values []*config.ValuesCase, series []*config.SeriesCase, start, end time.Time) []*comparer.TestCase {
+	tcs := make([]*comparer.TestCase, 0, 10)
+	for _, name := range names {
+		tcs = append(tcs, &comparer.TestCase{Start: start, End: end, Matches: name.Matches, ExecType: comparer.LabelNames, Query: fmt.Sprintf("MetaMethod: %s, Matches: %s", comparer.LabelNames, strings.Join(name.Matches, ";"))})
+	}
+	for _, value := range values {
+		tcs = append(tcs, &comparer.TestCase{Start: start, End: end, Matches: value.Matches, ExecType: comparer.LabelValues, Label: value.Label, Query: fmt.Sprintf("MetaMethod: %s, Matches: %s, Label: %s", comparer.LabelValues, strings.Join(value.Matches, ";"), value.Label)})
+	}
+	for _, se := range series {
+		tcs = append(tcs, &comparer.TestCase{Start: start, End: end, Matches: se.Matches, ExecType: comparer.Series, Query: fmt.Sprintf("MetaMethod: %s, Matches: %s", comparer.Series, strings.Join(se.Matches, ";"))})
 	}
 	return tcs
 }

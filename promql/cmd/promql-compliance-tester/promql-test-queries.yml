@@ -29,7 +29,7 @@
 #
 # You will then also need to replace the host "demo.promlabs.com" in the test queries below with whatever
 # host you are running the instances on.
-test_cases:
+query_cases:
   # Scalar literals.
   - query: '42'
   - query: '1.234'
@@ -257,7 +257,7 @@ values_cases:
     label: 'instance'
   - matches: ['up']
     label: 'instance'
-  - matched: ['demo_api_request_duration_seconds_bucket']
+  - matches: ['demo_api_request_duration_seconds_bucket']
     label: 'path'
 
 series_cases:

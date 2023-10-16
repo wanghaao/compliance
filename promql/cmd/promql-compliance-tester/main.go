@@ -2,6 +2,7 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"math"
 	"net/http"
 	"os"
@@ -14,7 +15,6 @@ import (
 	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/api"
 	v1 "github.com/prometheus/client_golang/api/prometheus/v1"
-	"github.com/prometheus/common/log"
 	"github.com/prometheus/compliance/promql/comparer"
 	"github.com/prometheus/compliance/promql/config"
 	"github.com/prometheus/compliance/promql/output"
@@ -73,6 +73,7 @@ func (i *arrayFlags) Set(value string) error {
 
 func main() {
 	var configFiles arrayFlags
+	configFiles = []string{"promql-test-queries.yml", "test-promscale.yml"}
 	flag.Var(&configFiles, "config-file", "The path to the configuration file. If repeated, the specified files will be concatenated before YAML parsing.")
 	outputFormat := flag.String("output-format", "text", "The comparison output format. Valid values: [text, html, json]")
 	outputHTMLTemplate := flag.String("output-html-template", "./output/example-output.html", "The HTML template to use when using HTML as the output format.")
@@ -88,27 +89,27 @@ func main() {
 		var err error
 		outp, err = output.HTML(*outputHTMLTemplate)
 		if err != nil {
-			log.Fatalf("Error reading output HTML template: %v", err)
+			panic(fmt.Sprintf("Error reading output HTML template: %v", err))
 		}
 	case "json":
 		outp = output.JSON
 	case "tsv":
 		outp = output.TSV
 	default:
-		log.Fatalf("Invalid output format %q", *outputFormat)
+		panic(fmt.Sprintf("Invalid output format %q", *outputFormat))
 	}
 
 	cfg, err := config.LoadFromFiles(configFiles)
 	if err != nil {
-		log.Fatalf("Error loading configuration file: %v", err)
+		panic(fmt.Sprintf("Error loading configuration file: %v", err))
 	}
 	refAPI, err := newPromAPI(cfg.ReferenceTargetConfig)
 	if err != nil {
-		log.Fatalf("Error creating reference API: %v", err)
+		panic(fmt.Sprintf("Error creating reference API: %v", err))
 	}
 	testAPI, err := newPromAPI(cfg.TestTargetConfig)
 	if err != nil {
-		log.Fatalf("Error creating test API: %v", err)
+		panic(fmt.Sprintf("Error creating test API: %v", err))
 	}
 
 	comp := comparer.New(refAPI, testAPI, cfg.QueryTweaks)
@@ -118,7 +119,9 @@ func main() {
 		-getNonZeroDuration(cfg.QueryTimeParameters.RangeInSeconds, 10*time.Minute))
 	resolution := getNonZeroDuration(
 		cfg.QueryTimeParameters.ResolutionInSeconds, 10*time.Second)
-	expandedTestCases := testcases.ExpandTestCases(cfg.TestCases, cfg.QueryTweaks, start, end, resolution)
+	expandedTestCases := testcases.ExpandTestCases(cfg.QueryCases, cfg.QueryTweaks, start, end, resolution)
+	// add more cases of metaQuery
+	expandedTestCases = append(expandedTestCases, testcases.ExpandMetaTestCases(cfg.LabelsCases, cfg.ValuesCases, cfg.SeriesCases, start, end)...)
 
 	var wg sync.WaitGroup
 	results := make([]*comparer.Result, len(expandedTestCases))
@@ -132,9 +135,20 @@ func main() {
 		workCh <- struct{}{}
 
 		go func(i int, tc *comparer.TestCase) {
-			res, err := comp.Compare(tc)
-			if err != nil {
-				log.Fatalf("Error running comparison: %v", err)
+			var cErr error
+			var res *comparer.Result
+			switch tc.ExecType {
+			case comparer.RangeQuery:
+				res, cErr = comp.Compare(tc)
+			case comparer.LabelNames:
+				res, cErr = comp.CompareLabelNames(tc)
+			case comparer.LabelValues:
+				res, cErr = comp.CompareLabelValues(tc)
+			case comparer.Series:
+				res, cErr = comp.CompareSeries(tc)
+			}
+			if cErr != nil {
+				panic(fmt.Sprintf("Error running comparison: %v", cErr))
 			}
 			results[i] = res
 			if !res.Success() {

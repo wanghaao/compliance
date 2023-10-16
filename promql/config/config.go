@@ -11,11 +11,16 @@ import (
 
 // Config models the main configuration file.
 type Config struct {
-	ReferenceTargetConfig TargetConfig        `yaml:"reference_target_config"`
-	TestTargetConfig      TargetConfig        `yaml:"test_target_config"`
-	QueryTweaks           []*QueryTweak       `yaml:"query_tweaks"`
-	TestCases             []*TestCase         `yaml:"test_cases"`
-	QueryTimeParameters   QueryTimeParameters `yaml:"query_time_parameters"`
+	ReferenceTargetConfig TargetConfig  `yaml:"reference_target_config"`
+	TestTargetConfig      TargetConfig  `yaml:"test_target_config"`
+	QueryTweaks           []*QueryTweak `yaml:"query_tweaks"`
+
+	QueryCases  []*QueryCase  `yaml:"query_cases"`
+	LabelsCases []*LabelsCase `yaml:"labels_cases"`
+	ValuesCases []*ValuesCase `yaml:"values_cases"`
+	SeriesCases []*SeriesCase `yaml:"series_cases"`
+
+	QueryTimeParameters QueryTimeParameters `yaml:"query_time_parameters"`
 }
 
 type QueryTimeParameters struct {
@@ -51,12 +56,25 @@ type AdjustValueTolerance struct {
 	Margin   *float64 `yaml:"margin" json:"margin,omitempty"`
 }
 
-// TestCase represents a given query (pattern) to be tested.
-type TestCase struct {
+// QueryCase represents a given query (pattern) to be tested.
+type QueryCase struct {
 	Query          string   `yaml:"query"`
 	VariantArgs    []string `yaml:"variant_args,omitempty"`
 	SkipComparison bool     `yaml:"skip_comparison,omitempty"`
 	ShouldFail     bool     `yaml:"should_fail,omitempty"`
+}
+
+type LabelsCase struct {
+	Matches []string `yaml:"matches"`
+}
+
+type ValuesCase struct {
+	Matches []string `yaml:"matches"`
+	Label   string   `yaml:"label"`
+}
+
+type SeriesCase struct {
+	Matches []string `yaml:"matches"`
 }
 
 // LoadFromFiles parses the given YAML files into a Config.

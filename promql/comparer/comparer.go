@@ -20,12 +20,28 @@ const (
 	defaultMargin   = 0.0
 )
 
+const (
+	InstantQuery ExecType = "instant_query"
+	RangeQuery   ExecType = "range_query"
+	LabelNames   ExecType = "meta_label_names"
+	LabelValues  ExecType = "meta_label_values"
+	Series       ExecType = "meta_series"
+)
+
+type ExecType string
+
 // PromAPI allows running instant and range queries against a Prometheus-compatible API.
 type PromAPI interface {
 	// Query performs a query for the given time.
-	Query(ctx context.Context, query string, ts time.Time) (model.Value, v1.Warnings, error)
+	Query(ctx context.Context, query string, ts time.Time, opts ...v1.Option) (model.Value, v1.Warnings, error)
 	// QueryRange performs a query for the given range.
-	QueryRange(ctx context.Context, query string, r v1.Range) (model.Value, v1.Warnings, error)
+	QueryRange(ctx context.Context, query string, r v1.Range, opts ...v1.Option) (model.Value, v1.Warnings, error)
+	// LabelNames returns the unique label names present in the block in sorted order by given time range and matchers.
+	LabelNames(ctx context.Context, matches []string, startTime, endTime time.Time) ([]string, v1.Warnings, error)
+	// LabelValues performs a query for the values of the given label, time range and matchers.
+	LabelValues(ctx context.Context, label string, matches []string, startTime, endTime time.Time) (model.LabelValues, v1.Warnings, error)
+	// Series finds series by label matchers.
+	Series(ctx context.Context, matches []string, startTime, endTime time.Time) ([]model.LabelSet, v1.Warnings, error)
 }
 
 // TestCase represents a fully expanded query to be tested.
@@ -36,6 +52,12 @@ type TestCase struct {
 	Start          time.Time     `json:"start"`
 	End            time.Time     `json:"end"`
 	Resolution     time.Duration `json:"resolution"`
+
+	ExecType ExecType `json:"execType"`
+
+	// for metaQuery
+	Matches []string `json:"matches"`
+	Label   string   `json:"label"`
 }
 
 // A Comparer allows comparing query results for test cases between a reference API and a test API.
@@ -123,6 +145,90 @@ func (c *Comparer) Compare(tc *TestCase) (*Result, error) {
 		TestCase: tc,
 		Diff:     cmp.Diff(refResult, testResult, c.compareOptions),
 	}, nil
+}
+
+func (c *Comparer) CompareLabelNames(tc *TestCase) (*Result, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	refResult, _, refErr := c.refAPI.LabelNames(ctx, tc.Matches, tc.Start, tc.End)
+	testResult, _, testErr := c.testAPI.LabelNames(ctx, tc.Matches, tc.Start, tc.End)
+
+	sort.Strings(refResult)
+	sort.Strings(testResult)
+
+	if refErr != nil || testErr != nil {
+		return checkRefOrTestErr(tc, refErr, testErr)
+	}
+	return &Result{
+		TestCase: tc,
+		Diff:     cmp.Diff(refResult, testResult, c.compareOptions),
+	}, nil
+}
+
+func (c *Comparer) CompareLabelValues(tc *TestCase) (*Result, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	refResult, _, refErr := c.refAPI.LabelValues(ctx, tc.Label, tc.Matches, tc.Start, tc.End)
+	testResult, _, testErr := c.testAPI.LabelValues(ctx, tc.Label, tc.Matches, tc.Start, tc.End)
+
+	if refErr != nil || testErr != nil {
+		return checkRefOrTestErr(tc, refErr, testErr)
+	}
+	sort.Sort(refResult)
+	sort.Sort(testResult)
+
+	return &Result{
+		TestCase: tc,
+		Diff:     cmp.Diff(refResult, testResult, c.compareOptions),
+	}, nil
+}
+
+func (c *Comparer) CompareSeries(tc *TestCase) (*Result, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	refResult, _, refErr := c.refAPI.Series(ctx, tc.Matches, tc.Start, tc.End)
+	testResult, _, testErr := c.testAPI.Series(ctx, tc.Matches, tc.Start, tc.End)
+
+	if refErr != nil || testErr != nil {
+		return checkRefOrTestErr(tc, refErr, testErr)
+	}
+
+	refSeries := make([]string, 0, len(refResult))
+	for _, set := range refResult {
+		refSeries = append(refSeries, set.String())
+	}
+	testSeries := make([]string, 0, len(testResult))
+	for _, set := range testResult {
+		testSeries = append(testSeries, set.String())
+	}
+
+	sort.Strings(refSeries)
+	sort.Strings(testSeries)
+
+	return &Result{
+		TestCase: tc,
+		Diff:     cmp.Diff(refSeries, testSeries, c.compareOptions),
+	}, nil
+}
+
+func checkRefOrTestErr(tc *TestCase, refErr error, testErr error) (*Result, error) {
+	if refErr != nil {
+		if refErr != nil {
+			return nil, errors.Wrapf(refErr, "querying reference API for %q", strings.Join(tc.Matches, ";"))
+		}
+		return nil, fmt.Errorf("expected reference API query %q to fail, but succeeded", strings.Join(tc.Matches, ";"))
+	}
+
+	if testErr != nil {
+		if testErr != nil {
+			return &Result{TestCase: tc, UnexpectedFailure: testErr.Error(), Unsupported: strings.Contains(testErr.Error(), "501")}, nil
+		}
+		return &Result{TestCase: tc, UnexpectedSuccess: true}, nil
+	}
+	return nil, nil
 }
 
 func addFloatCompareOptions(queryTweaks []*config.QueryTweak, options *cmp.Options) {
